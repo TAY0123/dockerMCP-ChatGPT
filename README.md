@@ -1,6 +1,6 @@
 # Docker MCP ChatGPT Coding Runner
 
-A self-hosted remote MCP server for ChatGPT that can run shell commands, edit code, install Ubuntu packages, use Git, and authenticate with GitHub CLI. OAuth is bundled with Keycloak, and Cloudflare Tunnel can be enabled with a Docker Compose profile.
+A self-hosted remote MCP server for ChatGPT that can run shell commands, edit code, install Ubuntu packages, use Git, and authenticate with GitHub CLI. OAuth is bundled with Keycloak. Cloudflare can expose the stack through either a zero-account Quick Tunnel for testing or a stable named tunnel for regular use.
 
 ## What this reuses
 
@@ -9,7 +9,7 @@ This project avoids rebuilding mature infrastructure:
 - **Model Context Protocol Python SDK** provides FastMCP, Streamable HTTP, OAuth protected-resource metadata, bearer-token middleware, and tool annotations.
 - **Keycloak** provides OAuth/OIDC, login UI, authorization-code flow, PKCE, refresh tokens, and client management.
 - **Caddy** provides reverse proxying so MCP and OAuth use one public hostname.
-- **Cloudflare Tunnel** provides the optional outbound-only public route.
+- **Cloudflare Tunnel** provides optional outbound-only public routes, including Quick Tunnels and named tunnels.
 - **Ubuntu 24.04** supplies Bash, Python, Node.js, Git, GitHub CLI (`gh`), compilers, ripgrep, fd, jq, and curl.
 
 There was no existing application code in this repository to preserve; the original repository contained only an empty `README` file.
@@ -21,7 +21,7 @@ ChatGPT
    |
    | HTTPS / OAuth
    v
-Cloudflare Tunnel (optional Compose profile)
+Cloudflare Quick Tunnel or named tunnel
    |
    v
 Caddy gateway :8080
@@ -71,7 +71,8 @@ docker compose exec runner gh --version
 
 - Ubuntu host with Docker Engine and Docker Compose v2.
 - A ChatGPT plan or workspace that supports custom remote MCP apps.
-- A public HTTPS hostname for ChatGPT. Cloudflare Tunnel is included, but another HTTPS reverse proxy can be used.
+- For a stable deployment: a public HTTPS hostname managed by Cloudflare or another reverse proxy.
+- For temporary testing: no Cloudflare account or domain is required when using the Quick Tunnel helper.
 
 ## Initial setup
 
@@ -89,13 +90,15 @@ openssl rand -hex 32
 
 At minimum, replace `POSTGRES_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `OAUTH_CLIENT_SECRET`, and `MCP_USER_PASSWORD`.
 
-Set `PUBLIC_BASE_URL` to the final HTTPS origin:
+For a stable deployment, set `PUBLIC_BASE_URL` to the final HTTPS origin:
 
 ```dotenv
 PUBLIC_BASE_URL=https://mcp.example.com
 ```
 
 Do not include `/mcp` in `PUBLIC_BASE_URL`.
+
+For Quick Tunnel testing, the initial value can remain a placeholder. `scripts/quick-tunnel.sh` replaces it with the generated `trycloudflare.com` origin and recreates the URL-sensitive services.
 
 ### Obtain the ChatGPT callback URL
 
@@ -110,7 +113,7 @@ Set the full value as `CHATGPT_CALLBACK_URL`. Do not replace the callback ID, ad
 The OAuth values entered in ChatGPT must match `.env`:
 
 ```text
-MCP endpoint:  https://mcp.example.com/mcp
+MCP endpoint:  https://PUBLIC_HOST/mcp
 Client ID:     value of OAUTH_CLIENT_ID
 Client secret: value of OAUTH_CLIENT_SECRET
 Scopes:        openid profile email offline_access mcp:tools
@@ -119,7 +122,7 @@ Scopes:        openid profile email offline_access mcp:tools
 The authorization-server issuer is:
 
 ```text
-https://mcp.example.com/realms/mcp
+https://PUBLIC_HOST/realms/mcp
 ```
 
 The initial realm user is configured by `MCP_USER` and `MCP_USER_PASSWORD`. Keycloak forces a password change on first login.
@@ -138,9 +141,56 @@ Health:          http://localhost:8080/health
 Keycloak admin:  http://localhost:8081/admin/
 ```
 
-OAuth issuer URLs must match the token issuer exactly. For a ChatGPT connection, use the final HTTPS `PUBLIC_BASE_URL`, not the local URL.
+OAuth issuer URLs must match the token issuer exactly. For a ChatGPT connection, use the public HTTPS origin rather than the local URL.
 
-## Enable Cloudflare Tunnel
+## Quick Tunnel: no Cloudflare account or token
+
+Cloudflare Quick Tunnels create a random `https://*.trycloudflare.com` URL without a Cloudflare account, domain, DNS record, or tunnel token. They are intended only for development and testing.
+
+After setting the required secrets and ChatGPT callback URL in `.env`, run:
+
+```bash
+bash scripts/quick-tunnel.sh
+```
+
+The helper performs the complete bootstrap sequence:
+
+1. builds and starts the local application;
+2. recreates the `cloudflared-quick` container to obtain a fresh hostname;
+3. reads the generated URL from the Cloudflare logs;
+4. writes that origin to `PUBLIC_BASE_URL` in `.env`;
+5. recreates Keycloak, MCP, and Caddy so OAuth metadata and hostname validation use the new URL;
+6. prints the MCP endpoint and OAuth issuer.
+
+Example output:
+
+```text
+Public origin:  https://random-words.trycloudflare.com
+MCP endpoint:   https://random-words.trycloudflare.com/mcp
+OAuth issuer:  https://random-words.trycloudflare.com/realms/mcp
+```
+
+Enter the printed MCP endpoint in ChatGPT.
+
+The Quick Tunnel can also be started directly, but direct startup does not automatically update `PUBLIC_BASE_URL`:
+
+```bash
+docker compose --profile quick-tunnel up -d --build
+docker compose logs -f cloudflared-quick
+```
+
+Important limitations:
+
+- A new Quick Tunnel process receives a new random hostname.
+- Rerunning the helper requires updating the MCP endpoint in ChatGPT.
+- Quick Tunnels are testing infrastructure, not a production service.
+- Cloudflare documents a 200-concurrent-request limit and no Server-Sent Events support for Quick Tunnels.
+- This MCP server uses stateless JSON responses rather than SSE, but the temporary hostname and testing-only service limits still apply.
+- Do not enable the `tunnel` and `quick-tunnel` profiles at the same time.
+
+Use a named tunnel when the ChatGPT connector must survive container restarts without reconfiguration.
+
+## Stable named Cloudflare Tunnel
 
 Create a named tunnel in Cloudflare Zero Trust and configure one public hostname:
 
@@ -155,7 +205,7 @@ Copy the tunnel token into `CLOUDFLARE_TUNNEL_TOKEN`, then start the profile:
 docker compose --profile tunnel up -d --build
 ```
 
-Without `--profile tunnel`, the `cloudflared` container does not start.
+Without `--profile tunnel`, the named `cloudflared` container does not start.
 
 The tunnel does not replace OAuth. It only publishes the gateway through an outbound connection. Do not put another interactive login in front of this hostname unless ChatGPT can satisfy it; Keycloak already protects MCP.
 
@@ -238,7 +288,9 @@ docker compose exec runner bash
 
 Keycloak imports the realm only when the `mcp` realm does not already exist. Changing `CHATGPT_CALLBACK_URL`, the OAuth client secret, or the bootstrap user in `.env` does not rewrite an existing realm.
 
-For an existing deployment, update the client in the local Keycloak admin console. During disposable development, stop the stack and remove only the PostgreSQL data volume to re-import the realm. Do not remove `workspace` or `runner_home` unless you intend to delete source files or GitHub credentials.
+Changing `PUBLIC_BASE_URL` does take effect after recreating Keycloak and MCP. The Quick Tunnel helper performs that recreation automatically.
+
+For other existing-realm changes, update the client in the local Keycloak admin console. During disposable development, stop the stack and remove only the PostgreSQL data volume to re-import the realm. Do not remove `workspace` or `runner_home` unless you intend to delete source files or GitHub credentials.
 
 ## Remaining isolation
 
@@ -251,7 +303,7 @@ For an existing deployment, update the client in the local Keycloak admin consol
 - Workspace path traversal and symlink escape checks remain enabled for dedicated file tools.
 - OAuth access-token signature, issuer, audience, expiry, and scope validation remain enabled.
 - Keycloak admin endpoints are blocked from the public gateway and bound separately to loopback.
-- Cloudflare Tunnel remains disabled unless its Compose profile is selected.
+- Both Cloudflare tunnel containers remain disabled unless their profile or helper is selected.
 
 ## Critical security warning
 
@@ -271,17 +323,26 @@ Docker containers share the host kernel. For hostile or multi-user workloads, us
 ## Useful commands
 
 ```bash
+# Start a fresh Quick Tunnel and update OAuth URLs
+bash scripts/quick-tunnel.sh
+
 # Show status
 docker compose ps
 
-# Follow logs
+# Follow application logs
 docker compose logs -f mcp runner keycloak gateway
+
+# Follow Quick Tunnel logs
+docker compose --profile quick-tunnel logs -f cloudflared-quick
 
 # Check privilege and tools
 docker compose exec runner bash -lc 'id && git --version && gh --version'
 
 # Stop services without deleting data
 docker compose down
+
+# Stop all services including profile containers
+docker compose --profile tunnel --profile quick-tunnel down
 
 # Rebuild after source or Dockerfile changes
 docker compose up -d --build
