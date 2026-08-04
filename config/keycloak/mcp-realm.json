@@ -1,0 +1,118 @@
+{
+  "realm": "mcp",
+  "displayName": "MCP Sandbox",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "offlineSessionMaxLifespanEnabled": true,
+  "offlineSessionMaxLifespan": 5184000,
+  "roles": {
+    "realm": [
+      {
+        "name": "mcp-user",
+        "description": "May use the MCP coding sandbox"
+      }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "mcp:tools",
+      "description": "Use command and coding tools in the MCP sandbox",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "Use the isolated MCP command and coding sandbox"
+      },
+      "protocolMappers": [
+        {
+          "name": "mcp-server-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "mcp-server",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "mcp-server",
+      "name": "MCP Resource Server",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "${OAUTH_CLIENT_ID}",
+      "name": "ChatGPT MCP Client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${OAUTH_CLIENT_SECRET}",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "consentRequired": true,
+      "fullScopeAllowed": false,
+      "redirectUris": [
+        "${CHATGPT_CALLBACK_URL}"
+      ],
+      "webOrigins": [
+        "https://chatgpt.com"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false"
+      },
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles",
+        "web-origins",
+        "mcp:tools"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "${MCP_USER}",
+      "email": "${MCP_USER_EMAIL}",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": [
+        "UPDATE_PASSWORD"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${MCP_USER_PASSWORD}",
+          "temporary": true
+        }
+      ],
+      "realmRoles": [
+        "mcp-user"
+      ]
+    }
+  ]
+}

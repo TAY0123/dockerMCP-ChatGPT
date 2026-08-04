@@ -1,0 +1,193 @@
+name: docker-mcp-chatgpt
+
+x-sandbox-hardening: &sandbox-hardening
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  mem_limit: 1g
+  cpus: 1.0
+  ulimits:
+    nofile:
+      soft: 4096
+      hard: 4096
+  restart: unless-stopped
+
+services:
+  runner:
+    <<: *sandbox-hardening
+    build:
+      context: .
+      args:
+        SANDBOX_UID: ${SANDBOX_UID:-10001}
+        SANDBOX_GID: ${SANDBOX_GID:-10001}
+    command: ["docker-mcp-runner"]
+    network_mode: none
+    environment:
+      WORKSPACE: /workspace
+      RUNNER_SOCKET: /run/runner/runner.sock
+      MAX_TIMEOUT_SECONDS: ${MAX_TIMEOUT_SECONDS:-300}
+      MAX_OUTPUT_BYTES: ${MAX_OUTPUT_BYTES:-524288}
+      MAX_FILE_BYTES: ${MAX_FILE_BYTES:-2097152}
+    volumes:
+      - workspace:/workspace
+      - runner_socket:/run/runner
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
+      - /home/sandbox/.cache:rw,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0700
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/runner/runner.sock"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
+
+  mcp:
+    <<: *sandbox-hardening
+    build:
+      context: .
+      args:
+        SANDBOX_UID: ${SANDBOX_UID:-10001}
+        SANDBOX_GID: ${SANDBOX_GID:-10001}
+    command: ["docker-mcp-server"]
+    depends_on:
+      runner:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      MCP_RESOURCE_URL: ${MCP_RESOURCE_URL:-}
+      OAUTH_ENABLED: ${OAUTH_ENABLED:-true}
+      OAUTH_ISSUER_URL: ${OAUTH_ISSUER_URL:-}
+      OAUTH_JWKS_URL: http://keycloak:8080/realms/mcp/protocol/openid-connect/certs
+      OAUTH_AUDIENCE: ${OAUTH_AUDIENCE:-mcp-server}
+      OAUTH_REQUIRED_SCOPES: ${OAUTH_REQUIRED_SCOPES:-mcp:tools}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+      RUNNER_SOCKET: /run/runner/runner.sock
+    volumes:
+      - runner_socket:/run/runner:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777
+      - /home/sandbox/.cache:rw,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=0700
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.0
+    command: ["start", "--import-realm"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      KC_HOSTNAME_ADMIN: ${KEYCLOAK_ADMIN_URL:-http://localhost:8081}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
+      CHATGPT_CALLBACK_URL: ${CHATGPT_CALLBACK_URL:?Set the exact ChatGPT OAuth callback URL in .env}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-chatgpt-mcp}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:?Set OAUTH_CLIENT_SECRET in .env}
+      MCP_USER: ${MCP_USER:-mcp-user}
+      MCP_USER_EMAIL: ${MCP_USER_EMAIL:-mcp-user@example.invalid}
+      MCP_USER_PASSWORD: ${MCP_USER_PASSWORD:?Set MCP_USER_PASSWORD in .env}
+    volumes:
+      - ./config/keycloak/mcp-realm.json:/opt/keycloak/data/import/mcp-realm.json:ro
+    ports:
+      - "127.0.0.1:${KEYCLOAK_ADMIN_PORT:-8081}:8080"
+    networks:
+      - backend
+    mem_limit: 2g
+    restart: unless-stopped
+
+  gateway:
+    image: caddy:2.10.0-alpine
+    depends_on:
+      mcp:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
+    volumes:
+      - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      - backend
+      - tunnel
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /config:rw,nosuid,nodev,size=32m
+      - /data:rw,nosuid,nodev,size=32m
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.5.2
+    profiles: ["tunnel"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks:
+      - tunnel
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  workspace:
+  runner_socket:
+  postgres_data:
+
+networks:
+  backend:
+    internal: true
+  tunnel:
