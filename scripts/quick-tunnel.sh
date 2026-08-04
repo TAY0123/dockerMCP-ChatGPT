@@ -25,8 +25,20 @@ get_env_value() {
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
 }
 
+show_startup_diagnostics() {
+  echo >&2
+  echo "Service startup failed. Current status:" >&2
+  "${compose[@]}" ps >&2 || true
+  echo >&2
+  echo "Recent service logs:" >&2
+  "${compose[@]}" logs --no-color --tail=200 runner keycloak mcp gateway >&2 || true
+}
+
 # Start the application locally before requesting a temporary hostname.
-"${compose[@]}" up -d --build postgres keycloak runner mcp gateway
+if ! "${compose[@]}" up -d --build postgres keycloak runner mcp gateway; then
+  show_startup_diagnostics
+  exit 1
+fi
 
 # A fresh cloudflared process creates a fresh trycloudflare.com hostname.
 "${compose[@]}" --profile quick-tunnel rm -sf cloudflared-quick >/dev/null 2>&1 || true
@@ -73,7 +85,10 @@ trap - EXIT
 
 # Recreate URL-sensitive services so MCP metadata, OAuth issuer URLs,
 # hostname validation, and Keycloak use the temporary hostname.
-"${compose[@]}" up -d --force-recreate keycloak mcp gateway
+if ! "${compose[@]}" up -d --force-recreate keycloak mcp gateway; then
+  show_startup_diagnostics
+  exit 1
+fi
 
 client_id="$(get_env_value OAUTH_CLIENT_ID)"
 client_secret="$(get_env_value OAUTH_CLIENT_SECRET)"

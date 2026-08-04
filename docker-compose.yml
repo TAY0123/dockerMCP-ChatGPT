@@ -26,13 +26,11 @@ services:
       args:
         SANDBOX_UID: ${SANDBOX_UID:-10001}
         SANDBOX_GID: ${SANDBOX_GID:-10001}
-    entrypoint: ["/usr/local/bin/runner-entrypoint.sh"]
     command: ["docker-mcp-runner"]
     user: "0:${SANDBOX_GID:-10001}"
     security_opt:
       - no-new-privileges:true
     environment:
-      ROOT_PASSWORD: ${ROOT_PASSWORD:-root}
       HOME: /root
       XDG_CONFIG_HOME: /root/.config
       GH_CONFIG_DIR: /root/.config/gh
@@ -53,11 +51,17 @@ services:
     networks:
       - runner_outbound
     healthcheck:
-      test: ["CMD-SHELL", "test -S /run/runner/runner.sock"]
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - --unix-socket
+        - /run/runner/runner.sock
+        - http://localhost/health
       interval: 5s
-      timeout: 2s
+      timeout: 3s
       retries: 20
-      start_period: 5s
+      start_period: 10s
 
   mcp:
     <<: *service-hardening
