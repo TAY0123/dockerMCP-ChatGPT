@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docker-mcp-chatgpt"
+version = "0.1.0"
+description = "OAuth-protected MCP command and coding sandbox for ChatGPT"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+  "mcp==1.28.1",
+  "httpx==0.28.1",
+  "PyJWT[crypto]==2.10.1",
+]
+
+[project.scripts]
+docker-mcp-server = "docker_mcp_chatgpt.server:main"
+docker-mcp-runner = "docker_mcp_chatgpt.runner:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

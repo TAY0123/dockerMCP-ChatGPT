@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      PUBLIC_BASE_URL: https://mcp.example.com
+      CHATGPT_CALLBACK_URL: https://chatgpt.com/connector/oauth/test-callback
+      OAUTH_CLIENT_SECRET: test-only-secret
+      MCP_USER_PASSWORD: test-only-password
+      KEYCLOAK_ADMIN_PASSWORD: test-only-password
+      POSTGRES_PASSWORD: test-only-password
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Build sandbox image
+        run: docker build -t docker-mcp-chatgpt:test .
+      - name: Compile Python source
+        run: docker run --rm --entrypoint python docker-mcp-chatgpt:test -m compileall -q /app/src

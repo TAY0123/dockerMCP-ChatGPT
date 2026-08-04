@@ -1,0 +1,24 @@
+{
+    admin off
+    auto_https off
+}
+
+:8080 {
+    header {
+        -Server
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+    }
+
+    @blocked_admin path /admin* /realms/master*
+    respond @blocked_admin 404
+
+    @mcp_routes path /mcp /mcp/* /.well-known/oauth-protected-resource* /health
+    handle @mcp_routes {
+        reverse_proxy mcp:8000
+    }
+
+    handle {
+        reverse_proxy keycloak:8080
+    }
+}
