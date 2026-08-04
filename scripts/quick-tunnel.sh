@@ -85,13 +85,13 @@ cat <<EOF
 
 Quick Tunnel is running.
 
-MCP endpoint:   $url/mcp
-OAuth issuer:  $url/realms/mcp
-Client ID:     $client_id
-Client secret: $client_secret
-Scopes:        $scopes
-Login user:    $mcp_user
-Login password:$mcp_password
+MCP endpoint:    $url/mcp
+OAuth issuer:   $url/realms/mcp
+Client ID:      $client_id
+Client secret:  $client_secret
+Scopes:         $scopes
+Login user:     $mcp_user
+Login password: $mcp_password
 
 The generated settings are stored in $ENV_FILE with mode 600.
 Enter the MCP endpoint and OAuth values above in ChatGPT.
