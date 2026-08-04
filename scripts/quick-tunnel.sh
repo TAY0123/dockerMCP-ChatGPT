@@ -3,6 +3,9 @@ set -Eeuo pipefail
 
 ENV_FILE="${ENV_FILE:-.env}"
 TIMEOUT_SECONDS="${QUICK_TUNNEL_TIMEOUT_SECONDS:-90}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_DIR"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is required" >&2
@@ -14,15 +17,15 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "$ENV_FILE does not exist. Copy .env.example to .env and set the required secrets first." >&2
-  exit 1
-fi
-
+ENV_FILE="$ENV_FILE" bash "$SCRIPT_DIR/init-env.sh"
 compose=(docker compose --env-file "$ENV_FILE")
 
-# Start the application with the currently configured URL so the local gateway
-# is healthy before cloudflared requests a temporary public hostname.
+get_env_value() {
+  local key="$1"
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
+}
+
+# Start the application locally before requesting a temporary hostname.
 "${compose[@]}" up -d --build postgres keycloak runner mcp gateway
 
 # A fresh cloudflared process creates a fresh trycloudflare.com hostname.
@@ -68,19 +71,33 @@ chmod --reference="$ENV_FILE" "$tmp_file" 2>/dev/null || true
 mv "$tmp_file" "$ENV_FILE"
 trap - EXIT
 
-# Recreate URL-sensitive services so MCP resource metadata, OAuth issuer URLs,
-# allowed hosts, and Keycloak hostname all use the new temporary hostname.
+# Recreate URL-sensitive services so MCP metadata, OAuth issuer URLs,
+# hostname validation, and Keycloak use the temporary hostname.
 "${compose[@]}" up -d --force-recreate keycloak mcp gateway
+
+client_id="$(get_env_value OAUTH_CLIENT_ID)"
+client_secret="$(get_env_value OAUTH_CLIENT_SECRET)"
+scopes="openid profile email offline_access $(get_env_value OAUTH_REQUIRED_SCOPES)"
+mcp_user="$(get_env_value MCP_USER)"
+mcp_password="$(get_env_value MCP_USER_PASSWORD)"
 
 cat <<EOF
 
 Quick Tunnel is running.
 
-Public origin:  $url
-MCP endpoint:   $url/mcp
-OAuth issuer:  $url/realms/mcp
+MCP endpoint:    $url/mcp
+OAuth issuer:   $url/realms/mcp
+Client ID:      $client_id
+Client secret:  $client_secret
+Scopes:         $scopes
+Login user:     $mcp_user
+Login password: $mcp_password
 
-PUBLIC_BASE_URL in $ENV_FILE was updated automatically.
-Update the MCP endpoint in ChatGPT whenever this script generates a new URL.
-Quick Tunnels are temporary development endpoints; use the named tunnel profile for a stable deployment.
+The generated settings are stored in $ENV_FILE with mode 600.
+Enter the MCP endpoint and OAuth values above in ChatGPT.
+The callback wildcard in the default template is for testing only; replace it
+with ChatGPT's exact callback URL for a stable deployment.
+
+Quick Tunnel URLs change when cloudflared is recreated. Use the named tunnel
+profile when the ChatGPT MCP endpoint must remain stable.
 EOF

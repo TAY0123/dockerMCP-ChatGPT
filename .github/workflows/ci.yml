@@ -22,8 +22,17 @@ jobs:
         run: docker compose --profile tunnel --profile quick-tunnel config --quiet
       - name: Validate helper scripts
         run: |
+          bash -n scripts/init-env.sh
           bash -n scripts/quick-tunnel.sh
           bash -n scripts/runner-entrypoint.sh
+      - name: Validate environment initialization
+        run: |
+          test_env="$(mktemp -u)"
+          ENV_FILE="$test_env" bash scripts/init-env.sh
+          ! grep -Eq '=(auto|AUTO|generate|GENERATE)$' "$test_env"
+          grep -q '^CHATGPT_CALLBACK_URL=https://chatgpt.com/connector/oauth/\*$' "$test_env"
+          test "$(stat -c '%a' "$test_env")" = 600
+          rm -f "$test_env"
       - name: Build sandbox image
         run: docker build -t docker-mcp-chatgpt:test .
       - name: Validate root password entrypoint
