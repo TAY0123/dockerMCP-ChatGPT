@@ -18,6 +18,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate Compose
         run: docker compose config --quiet
+      - name: Validate tunnel profiles
+        run: docker compose --profile tunnel --profile quick-tunnel config --quiet
+      - name: Validate Quick Tunnel helper
+        run: bash -n scripts/quick-tunnel.sh
       - name: Build sandbox image
         run: docker build -t docker-mcp-chatgpt:test .
       - name: Compile Python source
