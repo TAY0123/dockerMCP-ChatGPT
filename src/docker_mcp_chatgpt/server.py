@@ -1,4 +1,4 @@
-"""OAuth-protected MCP facade for the isolated sandbox runner."""
+"""OAuth-protected MCP facade for the privileged coding runner."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from starlette.responses import JSONResponse
 from .auth import KeycloakJWTVerifier
 
 RUNNER_SOCKET = os.getenv("RUNNER_SOCKET", "/run/runner/runner.sock")
+
+
 def _env_or_default(name: str, default: str) -> str:
     value = os.getenv(name, "").strip()
     return value or default
@@ -58,10 +60,11 @@ def _transport_security() -> TransportSecuritySettings:
 
 def _build_server() -> FastMCP:
     common = dict(
-        name="Ubuntu Coding Sandbox",
+        name="Ubuntu Coding Runner",
         instructions=(
-            "Run commands and edit files only inside the isolated /workspace sandbox. "
-            "The runner has no network interface, runs as a non-root user, and has a read-only root filesystem."
+            "Run commands and edit files in /workspace. The command runner executes as root, "
+            "has outbound network access, can install operating-system packages, and can use Git and GitHub CLI. "
+            "Treat every command as a privileged, potentially destructive action."
         ),
         host="0.0.0.0",
         port=8000,
@@ -113,27 +116,28 @@ async def health(_: Request) -> JSONResponse:
 
 
 @mcp.tool(
-    title="Sandbox information",
+    title="Runner information",
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False),
 )
 async def sandbox_info() -> dict:
-    """Return isolation properties and execution limits for the sandbox."""
+    """Return privilege, network, filesystem, GitHub CLI, and execution-limit information."""
     return await _runner_request("GET", "/info")
 
 
 @mcp.tool(
-    title="Run sandbox command",
+    title="Run privileged command",
     annotations=ToolAnnotations(
         readOnlyHint=False,
         destructiveHint=True,
         idempotentHint=False,
-        openWorldHint=False,
+        openWorldHint=True,
     ),
 )
 async def run_command(command: str, cwd: str = ".", timeout_seconds: int = 60) -> dict:
-    """Run a Bash command inside /workspace with no network access.
+    """Run a root Bash command with outbound network access, starting inside /workspace.
 
-    The command may modify workspace files. The timeout is capped by the server.
+    Commands can modify the entire runner container, install packages, access persisted GitHub
+    credentials, and contact external services. The timeout is capped by the server.
     """
     return await _runner_request(
         "POST",
@@ -163,7 +167,9 @@ async def read_file(path: str, max_bytes: int = 262144) -> dict:
 async def write_file(path: str, content: str, overwrite: bool = False) -> dict:
     """Create a workspace file, or replace it only when overwrite is true."""
     return await _runner_request(
-        "POST", "/write", {"path": path, "content": content, "overwrite": overwrite}
+        "POST", 
+        "/write", 
+        {"path": path, "content": content, "overwrite": overwrite}
     )
 
 
