@@ -1,4 +1,4 @@
-"""Network-isolated command and file runner exposed only over a Unix socket."""
+"""Privileged command and file runner exposed only over a Unix socket."""
 
 from __future__ import annotations
 
@@ -17,6 +17,9 @@ from starlette.routing import Route
 
 WORKSPACE = Path(os.getenv("WORKSPACE", "/workspace")).resolve()
 SOCKET_PATH = Path(os.getenv("RUNNER_SOCKET", "/run/runner/runner.sock"))
+RUNNER_HOME = os.getenv("HOME", "/root" if os.getuid() == 0 else "/home/sandbox")
+RUNNER_NETWORK = os.getenv("RUNNER_NETWORK", "enabled")
+RUNNER_FILESYSTEM_ROOT = os.getenv("RUNNER_FILESYSTEM_ROOT", "writable")
 MAX_COMMAND_LENGTH = int(os.getenv("MAX_COMMAND_LENGTH", "32768"))
 MAX_TIMEOUT_SECONDS = int(os.getenv("MAX_TIMEOUT_SECONDS", "300"))
 MAX_OUTPUT_BYTES = int(os.getenv("MAX_OUTPUT_BYTES", str(512 * 1024)))
@@ -52,7 +55,9 @@ def _workspace_path(value: str, *, allow_root: bool = True) -> Path:
 
 def _safe_environment() -> dict[str, str]:
     return {
-        "HOME": "/home/sandbox",
+        "HOME": RUNNER_HOME,
+        "XDG_CONFIG_HOME": os.getenv("XDG_CONFIG_HOME", f"{RUNNER_HOME}/.config"),
+        "GH_CONFIG_DIR": os.getenv("GH_CONFIG_DIR", f"{RUNNER_HOME}/.config/gh"),
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
         "PATH": "/opt/venv/bin:/usr/local/bin:/usr/bin:/bin",
@@ -90,8 +95,14 @@ async def info(_: Request) -> JSONResponse:
             "workspace": str(WORKSPACE),
             "uid": os.getuid(),
             "gid": os.getgid(),
-            "network": "disabled",
-            "filesystem_root": "read-only",
+            "root": os.getuid() == 0,
+            "network": RUNNER_NETWORK,
+            "filesystem_root": RUNNER_FILESYSTEM_ROOT,
+            "runtime_package_install": os.getuid() == 0
+            and RUNNER_NETWORK == "enabled"
+            and RUNNER_FILESYSTEM_ROOT == "writable",
+            "github_cli": True,
+            "github_config_dir": os.getenv("GH_CONFIG_DIR", f"{RUNNER_HOME}/.config/gh"),
             "workspace_free_bytes": usage.f_bavail * usage.f_frsize,
             "limits": {
                 "max_timeout_seconds": MAX_TIMEOUT_SECONDS,

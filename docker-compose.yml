@@ -1,11 +1,6 @@
 name: docker-mcp-chatgpt
 
-x-sandbox-hardening: &sandbox-hardening
-  read_only: true
-  cap_drop:
-    - ALL
-  security_opt:
-    - no-new-privileges:true
+x-runtime-limits: &runtime-limits
   pids_limit: 256
   mem_limit: 1g
   cpus: 1.0
@@ -15,28 +10,46 @@ x-sandbox-hardening: &sandbox-hardening
       hard: 4096
   restart: unless-stopped
 
+x-service-hardening: &service-hardening
+  <<: *runtime-limits
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
 services:
   runner:
-    <<: *sandbox-hardening
+    <<: *runtime-limits
     build:
       context: .
       args:
         SANDBOX_UID: ${SANDBOX_UID:-10001}
         SANDBOX_GID: ${SANDBOX_GID:-10001}
     command: ["docker-mcp-runner"]
-    network_mode: none
+    user: "0:${SANDBOX_GID:-10001}"
+    security_opt:
+      - no-new-privileges:true
     environment:
+      HOME: /root
+      XDG_CONFIG_HOME: /root/.config
+      GH_CONFIG_DIR: /root/.config/gh
       WORKSPACE: /workspace
       RUNNER_SOCKET: /run/runner/runner.sock
+      RUNNER_NETWORK: enabled
+      RUNNER_FILESYSTEM_ROOT: writable
       MAX_TIMEOUT_SECONDS: ${MAX_TIMEOUT_SECONDS:-300}
       MAX_OUTPUT_BYTES: ${MAX_OUTPUT_BYTES:-524288}
       MAX_FILE_BYTES: ${MAX_FILE_BYTES:-2097152}
     volumes:
       - workspace:/workspace
       - runner_socket:/run/runner
+      - runner_home:/root
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
-      - /home/sandbox/.cache:rw,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0700
+      - /root/.cache:rw,nosuid,nodev,size=128m,uid=0,gid=0,mode=0700
+    networks:
+      - runner_outbound
     healthcheck:
       test: ["CMD-SHELL", "test -S /run/runner/runner.sock"]
       interval: 5s
@@ -45,7 +58,7 @@ services:
       start_period: 5s
 
   mcp:
-    <<: *sandbox-hardening
+    <<: *service-hardening
     build:
       context: .
       args:
@@ -185,9 +198,11 @@ services:
 volumes:
   workspace:
   runner_socket:
+  runner_home:
   postgres_data:
 
 networks:
   backend:
     internal: true
+  runner_outbound:
   tunnel:
