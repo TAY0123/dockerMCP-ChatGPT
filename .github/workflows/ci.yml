@@ -24,7 +24,6 @@ jobs:
         run: |
           bash -n scripts/init-env.sh
           bash -n scripts/quick-tunnel.sh
-          bash -n scripts/runner-entrypoint.sh
       - name: Validate environment initialization
         run: |
           test_env="$(mktemp -u)"
@@ -35,7 +34,13 @@ jobs:
           rm -f "$test_env"
       - name: Build sandbox image
         run: docker build -t docker-mcp-chatgpt:test .
-      - name: Validate root password entrypoint
-        run: docker run --rm --user 0 -e ROOT_PASSWORD=root --entrypoint /usr/local/bin/runner-entrypoint.sh docker-mcp-chatgpt:test true
       - name: Compile Python source
         run: docker run --rm --entrypoint python docker-mcp-chatgpt:test -m compileall -q /app/src
+      - name: Start runner and verify Unix socket health
+        run: |
+          docker compose up -d runner
+          timeout 60 sh -c 'until docker compose exec -T runner curl -fsS --unix-socket /run/runner/runner.sock http://localhost/health; do sleep 2; done'
+          docker compose exec -T runner bash -lc 'test "$(id -u)" = 0 && git --version && gh --version'
+      - name: Runner logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200 runner
