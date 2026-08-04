@@ -20,9 +20,13 @@ jobs:
         run: docker compose config --quiet
       - name: Validate tunnel profiles
         run: docker compose --profile tunnel --profile quick-tunnel config --quiet
-      - name: Validate Quick Tunnel helper
-        run: bash -n scripts/quick-tunnel.sh
+      - name: Validate helper scripts
+        run: |
+          bash -n scripts/quick-tunnel.sh
+          bash -n scripts/runner-entrypoint.sh
       - name: Build sandbox image
         run: docker build -t docker-mcp-chatgpt:test .
+      - name: Validate root password entrypoint
+        run: docker run --rm --user 0 -e ROOT_PASSWORD=root --entrypoint /usr/local/bin/runner-entrypoint.sh docker-mcp-chatgpt:test true
       - name: Compile Python source
         run: docker run --rm --entrypoint python docker-mcp-chatgpt:test -m compileall -q /app/src
