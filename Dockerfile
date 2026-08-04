@@ -15,7 +15,6 @@ RUN apt-get update \
         jq \
         nodejs \
         npm \
-        passwd \
         python3 \
         python3-pip \
         python3-venv \
@@ -39,10 +38,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
-COPY scripts/runner-entrypoint.sh /usr/local/bin/runner-entrypoint.sh
 
-RUN chmod 0755 /usr/local/bin/runner-entrypoint.sh \
-    && python3 -m venv /opt/venv \
+RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
     && /opt/venv/bin/pip install --no-cache-dir . \
     && chown -R sandbox:sandbox /opt/venv
